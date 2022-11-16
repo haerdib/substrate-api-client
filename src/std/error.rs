@@ -1,5 +1,8 @@
-use crate::std::rpc::XtStatus;
-use ac_node_api::metadata::{InvalidMetadataError, MetadataError};
+use crate::{rpc::RpcClientError, std::rpc::XtStatus};
+use ac_node_api::{
+	metadata::{InvalidMetadataError, MetadataError},
+	DispatchError,
+};
 
 pub type ApiResult<T> = Result<T, Error>;
 
@@ -16,8 +19,8 @@ pub enum Error {
 	#[cfg(feature = "ws-client")]
 	#[error("WebSocket Error: {0}")]
 	WebSocket(#[from] ws::Error),
-	#[error("RpcClient error: {0}")]
-	RpcClient(String),
+	#[error("RpcClient error: {0:?}")]
+	RpcClient(#[from] RpcClientError),
 	#[error("ChannelReceiveError, sender is disconnected: {0}")]
 	Disconnected(#[from] sp_std::sync::mpsc::RecvError),
 	#[error("Metadata Error: {0:?}")]
@@ -37,6 +40,8 @@ pub enum Error {
 	UnsupportedXtStatus(XtStatus),
 	#[error("Error converting NumberOrHex to Balance")]
 	TryFromIntError,
+	#[error("The node runtime could not dispatch an extrinsic")]
+	Dispatch(DispatchError),
 	#[error(transparent)]
 	Other(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 }

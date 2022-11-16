@@ -1,3 +1,4 @@
+use ac_node_api::Events;
 /*
    Copyright 2019 Supercomputing Systems AG
 
@@ -14,24 +15,26 @@
    limitations under the License.
 
 */
-use std::sync::mpsc::{Receiver, SendError, Sender as ThreadOut};
-
-use ac_node_api::events::{EventsDecoder, Raw, RawEvent};
-use ac_primitives::ExtrinsicParams;
-use codec::Decode;
-use log::{debug, error, info, warn};
-use serde_json::Value;
-use sp_core::Pair;
-use sp_runtime::MultiSignature;
-use ws::{CloseCode, Error, Handler, Handshake, Message, Result as WsResult, Sender};
+pub use ac_node_api::{events::EventDetails, StaticEvent};
 
 use crate::{
 	std::{
-		json_req, rpc::RpcClientError, Api, ApiResult, FromHexString, RpcClient as RpcClientTrait,
-		XtStatus,
+		error::Error, json_req, rpc::RpcClientError, Api, ApiResult, FromHexString,
+		RpcClient as RpcClientTrait, XtStatus,
 	},
 	utils,
 };
+use ac_node_api::DispatchError;
+use ac_primitives::ExtrinsicParams;
+use log::*;
+use serde_json::Value;
+use sp_core::Pair;
+use sp_runtime::MultiSignature;
+use std::{
+	fmt::Debug,
+	sync::mpsc::{Receiver, SendError, Sender as ThreadOut},
+};
+use ws::{CloseCode, Error as WsError, Handler, Handshake, Message, Result as WsResult, Sender};
 
 pub use client::WsRpcClient;
 
@@ -39,19 +42,30 @@ pub mod client;
 
 type RpcResult<T> = Result<T, RpcClientError>;
 
+pub type RpcMessage = RpcResult<Option<String>>;
+
 #[allow(clippy::result_large_err)]
 pub trait HandleMessage {
-	fn handle_message(&self, msg: Message, out: Sender, result: ThreadOut<String>) -> WsResult<()>;
+	type ThreadMessage;
+
+	fn handle_message(
+		&self,
+		msg: Message,
+		out: Sender,
+		result: ThreadOut<Self::ThreadMessage>,
+	) -> WsResult<()>;
 }
 
-pub struct RpcClient<MessageHandler> {
+pub struct RpcClient<MessageHandler, ThreadMessage> {
 	pub out: Sender,
 	pub request: String,
-	pub result: ThreadOut<String>,
+	pub result: ThreadOut<ThreadMessage>,
 	pub message_handler: MessageHandler,
 }
 
-impl<MessageHandler: HandleMessage> Handler for RpcClient<MessageHandler> {
+impl<MessageHandler: HandleMessage> Handler
+	for RpcClient<MessageHandler, MessageHandler::ThreadMessage>
+{
 	fn on_open(&mut self, _: Handshake) -> WsResult<()> {
 		info!("sending request: {}", self.request);
 		self.out.send(self.request.clone())?;
@@ -65,8 +79,11 @@ impl<MessageHandler: HandleMessage> Handler for RpcClient<MessageHandler> {
 
 #[allow(clippy::result_large_err)]
 pub trait Subscriber {
-	fn start_subscriber(&self, json_req: String, result_in: ThreadOut<String>)
-		-> Result<(), Error>;
+	fn start_subscriber(
+		&self,
+		json_req: String,
+		result_in: ThreadOut<String>,
+	) -> Result<(), WsError>;
 }
 
 impl<P, Params> Api<P, WsRpcClient, Params>
@@ -99,50 +116,52 @@ where
 		self.client.start_subscriber(jsonreq, sender).map_err(|e| e.into())
 	}
 
-	pub fn wait_for_event<E: Decode>(
-		&self,
-		module: &str,
-		variant: &str,
-		decoder: Option<EventsDecoder>,
-		receiver: &Receiver<String>,
-	) -> ApiResult<E> {
-		let raw = self.wait_for_raw_event(module, variant, decoder, receiver)?;
-		E::decode(&mut &raw.data[..]).map_err(|e| e.into())
+	pub fn wait_for_event<Ev: StaticEvent>(&self, receiver: &Receiver<String>) -> ApiResult<Ev> {
+		let maybe_event_details = self.wait_for_event_details::<Ev>(receiver)?;
+		maybe_event_details
+			.as_event()?
+			.ok_or(Error::Other("Could not find the specific event".into()))
 	}
 
-	pub fn wait_for_raw_event(
+	pub fn wait_for_event_details<Ev: StaticEvent>(
 		&self,
-		module: &str,
-		variant: &str,
-		decoder: Option<EventsDecoder>,
 		receiver: &Receiver<String>,
-	) -> ApiResult<RawEvent> {
-		let event_decoder = match decoder {
-			Some(d) => d,
-			None => EventsDecoder::new(self.metadata.clone()),
-		};
-
+	) -> ApiResult<EventDetails> {
 		loop {
-			let event_str = receiver.recv()?;
-			let _events = event_decoder.decode_events(&mut Vec::from_hex(event_str)?.as_slice());
-			info!("wait for raw event");
-			match _events {
-				Ok(raw_events) =>
-					for (phase, event) in raw_events.into_iter() {
-						info!("Decoded Event: {:?}, {:?}", phase, event);
-						match event {
-							Raw::Event(raw) if raw.pallet == module && raw.variant == variant =>
-								return Ok(raw),
-							Raw::Error(runtime_error) => {
-								error!("Some extrinsic Failed: {:?}", runtime_error);
-							},
-							_ => debug!("ignoring unsupported module event: {:?}", event),
-						}
-					},
-				Err(error) => error!("couldn't decode event record list: {:?}", error),
+			let events_str = receiver.recv()?;
+			let event_bytes = Vec::from_hex(events_str)?;
+			let events = Events::new(self.metadata.clone(), Default::default(), event_bytes);
+
+			for maybe_event_details in events.iter() {
+				let event_details = maybe_event_details?;
+
+				// Check for failed xt and return as Dispatch Error in case we find one.
+				// Careful - this reports the first one encountered. This event may belong to another extrinsic
+				// than the one that is being waited for.
+				if extrinsic_has_failed(&event_details) {
+					let dispatch_error =
+						DispatchError::decode_from(event_details.field_bytes(), &self.metadata);
+					return Err(Error::Dispatch(dispatch_error))
+				}
+
+				let event_metadata = event_details.event_metadata();
+				trace!(
+					"Found extrinsic: {:?}, {:?}",
+					event_metadata.pallet(),
+					event_metadata.event()
+				);
+				if event_metadata.pallet() == Ev::PALLET && event_metadata.event() == Ev::EVENT {
+					return Ok(event_details)
+				} else {
+					trace!("Not the event we are looking for, skipping.")
+				}
 			}
 		}
 	}
+}
+
+fn extrinsic_has_failed(event_details: &EventDetails) -> bool {
+	event_details.pallet_name() == "System" && event_details.variant_name() == "ExtrinsicFailed"
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
@@ -150,22 +169,38 @@ where
 pub struct GetRequestHandler;
 
 impl HandleMessage for GetRequestHandler {
-	fn handle_message(&self, msg: Message, out: Sender, result: ThreadOut<String>) -> WsResult<()> {
+	type ThreadMessage = RpcMessage;
+
+	fn handle_message(
+		&self,
+		msg: Message,
+		out: Sender,
+		result: ThreadOut<Self::ThreadMessage>,
+	) -> WsResult<()> {
 		out.close(CloseCode::Normal)
 			.unwrap_or_else(|_| warn!("Could not close Websocket normally"));
 
 		info!("Got get_request_msg {}", msg);
 		let result_str = serde_json::from_str(msg.as_text()?)
-			.map(|v: serde_json::Value| v["result"].to_string())
-			.map_err(|e| Box::new(RpcClientError::Serde(e)))?;
+			.map(|v: serde_json::Value| Some(v["result"].to_string()))
+			.map_err(RpcClientError::Serde);
 
-		result.send(result_str).map_err(|e| Box::new(RpcClientError::Send(e)).into())
+		result
+			.send(result_str)
+			.map_err(|e| Box::new(RpcClientError::Send(format!("{:?}", e))).into())
 	}
 }
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct SubscriptionHandler {}
 impl HandleMessage for SubscriptionHandler {
-	fn handle_message(&self, msg: Message, out: Sender, result: ThreadOut<String>) -> WsResult<()> {
+	type ThreadMessage = String;
+
+	fn handle_message(
+		&self,
+		msg: Message,
+		out: Sender,
+		result: ThreadOut<Self::ThreadMessage>,
+	) -> WsResult<()> {
 		info!("got on_subscription_msg {}", msg);
 		let value: serde_json::Value =
 			serde_json::from_str(msg.as_text()?).map_err(|e| Box::new(RpcClientError::Serde(e)))?;
@@ -182,7 +217,7 @@ impl HandleMessage for SubscriptionHandler {
 						match changes[0][1].as_str() {
 							Some(change_set) => {
 								if let Err(SendError(e)) = result.send(change_set.to_owned()) {
-									debug!("SendError: {}. will close ws", e);
+									debug!("SendError: {:?}. will close ws", e);
 									out.close(CloseCode::Normal)?;
 								}
 							},
@@ -210,15 +245,19 @@ impl HandleMessage for SubscriptionHandler {
 pub struct SubmitOnlyHandler;
 
 impl HandleMessage for SubmitOnlyHandler {
-	fn handle_message(&self, msg: Message, out: Sender, result: ThreadOut<String>) -> WsResult<()> {
+	type ThreadMessage = RpcMessage;
+
+	fn handle_message(
+		&self,
+		msg: Message,
+		out: Sender,
+		result: ThreadOut<Self::ThreadMessage>,
+	) -> WsResult<()> {
 		let retstr = msg.as_text()?;
 		debug!("got msg {}", retstr);
 		match result_from_json_response(retstr) {
-			Ok(val) => end_process(out, result, Some(val)),
-			Err(e) => {
-				end_process(out, result, None)?;
-				Err(Box::new(e).into())
-			},
+			Ok(val) => end_process(out, result, Ok(Some(val))),
+			Err(e) => end_process(out, result, Err(e)),
 		}
 	}
 }
@@ -234,38 +273,49 @@ impl SubmitAndWatchHandler {
 }
 
 impl HandleMessage for SubmitAndWatchHandler {
-	fn handle_message(&self, msg: Message, out: Sender, result: ThreadOut<String>) -> WsResult<()> {
+	type ThreadMessage = RpcMessage;
+
+	fn handle_message(
+		&self,
+		msg: Message,
+		out: Sender,
+		result: ThreadOut<Self::ThreadMessage>,
+	) -> WsResult<()> {
 		let return_string = msg.as_text()?;
 		debug!("got msg {}", return_string);
 		match parse_status(return_string) {
 			Ok((xt_status, val)) => {
 				if xt_status as u32 >= 10 {
-					error!("Node returned unexpected {:?}, ending watch process.", xt_status);
-					end_process(out, result, val)?;
+					let error = RpcClientError::Extrinsic(format!(
+						"Unexpected extrinsic status: {:?}, stopped watch process prematurely.",
+						xt_status
+					));
+					end_process(out, result, Err(error))?;
 				} else if xt_status as u32 >= self.exit_on as u32 {
-					end_process(out, result, val)?;
+					end_process(out, result, Ok(val))?;
 				}
 				Ok(())
 			},
-			Err(e) => {
-				error!("Node returned error {:?}, ending watch process.", e);
-				end_process(out, result, None)?;
-				Err(Box::new(e).into())
-			},
+			Err(e) => end_process(out, result, Err(e)),
 		}
 	}
 }
 
 #[allow(clippy::result_large_err)]
-fn end_process(out: Sender, result: ThreadOut<String>, value: Option<String>) -> WsResult<()> {
+fn end_process<ThreadMessage: Send + Sync + Debug>(
+	out: Sender,
+	result: ThreadOut<ThreadMessage>,
+	value: ThreadMessage,
+) -> WsResult<()> {
 	// return result to calling thread
 	debug!("Thread end result :{:?} value:{:?}", result, value);
-	let val = value.unwrap_or_default();
 
 	out.close(CloseCode::Normal)
 		.unwrap_or_else(|_| warn!("Could not close WebSocket normally"));
 
-	result.send(val).map_err(|e| Box::new(RpcClientError::Send(e)).into())
+	result
+		.send(value)
+		.map_err(|e| Box::new(RpcClientError::Send(format!("{:?}", e))).into())
 }
 
 fn parse_status(msg: &str) -> RpcResult<(XtStatus, Option<String>)> {
@@ -328,7 +378,7 @@ mod tests {
 	fn assert_extrinsic_err<T: Debug>(result: Result<T, RpcClientError>, msg: &str) {
 		assert_matches!(result.unwrap_err(), RpcClientError::Extrinsic(
 			m,
-		) if &m == msg)
+		) if m == msg)
 	}
 
 	#[test]
