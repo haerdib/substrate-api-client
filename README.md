@@ -19,9 +19,7 @@ curl https://sh.rustup.rs -sSf | sh
 # Install the rust toolchain specified in rust-toolchain.toml
 rustup show
 ```
-For more information, please refer to the [substrate](https://github.com/paritytech/substrate) repository.
 
-## Substrate node
 
 To execute the examples, a running substrate node is needed. You can download a node artifact from substrate directly: https://github.com/paritytech/substrate
 or run the kitchensink-node with docker:
