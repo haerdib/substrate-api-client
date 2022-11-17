@@ -17,7 +17,6 @@ rustup show
 To execute the examples, a running substrate node is needed. You can download a node artifact from substrate directly: https://github.com/paritytech
 ```
 
-## Examples
 
 To run an example, clone the `substrate-api-client` repository and run the desired example directly with the cargo command:
 
