@@ -30,8 +30,6 @@ docker run -p 9944:9944 -p 9933:9933 -p 30333:30333 parity/substrate:latest --de
 
 To run an example, clone the `substrate-api-client` repository and run the desired example directly with the cargo command:
 
-```bash
-git clone https://github.com/scs/substrate-api-client.git
 cd substrate-api-client
 cargo run --example example_get_storage
 ```
