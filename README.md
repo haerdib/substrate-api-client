@@ -9,12 +9,7 @@ substrate-api-client a library written in Rust for connecting to the substrate's
 * Compose extrinsics, send them and subscribe to updates (synchronously).
 * supports composing extrinsics for `no_std` builds
 * Watch events and execute code upon events.
-* Parse and print the node metadata.
 
-## Prerequisites
-
-In order to build the substrate-api-client and the examples, Rust and the wasm target are needed. For Linux:
-rust-toolchain.toml
 rustup show
 ```
 
