@@ -15,6 +15,7 @@ categories:
     collapse-after: 5
     label:
       - 'E0-breaksnothing'
+      - 'E1-breaksapi'
 change-template: '- $TITLE (#$NUMBER) @$AUTHOR '
 change-title-escapes: '\<*_&' # You can add # and @ to disable mentions, and add ` to disable code blocks.
 template: |
