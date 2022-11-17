@@ -21,9 +21,7 @@ rustup show
 ```
 
 
-To execute the examples, a running substrate node is needed. You can download a node artifact from substrate directly: https://github.com/paritytech/substrate
-or run the kitchensink-node with docker:
-
+To execute the examples, a running substrate node is needed. You can download a node artifact from substrate directly: https://github.com/paritytech
 ```
 docker run -p 9944:9944 -p 9933:9933 -p 30333:30333 parity/substrate:latest --dev --ws-external --rpc-external
 ```
