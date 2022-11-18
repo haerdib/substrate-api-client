@@ -15,8 +15,6 @@ To execute the examples, a running substrate node is needed. You can download a 
 
 To run an example, clone the `substrate-api-client` repository and run the desired example directly with the cargo command:
 
-
-cargo run --example example_get_storage
 ```
 or download the already built binaries from Github Actions: https://github.com/scs/substrate-api-client/actions and run them without any building:
 
