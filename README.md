@@ -14,9 +14,7 @@ To execute the examples, a running substrate node is needed. You can download a 
 
 
 To run an example, clone the `substrate-api-client` repository and run the desired example directly with the cargo command:
-
-```
-or download the already built binaries from Github Actions: https://github.com/scs/substrate-api-client/actions and run them without any building:
+t binaries from Github Actions: https://github.com/scs/substrate-api-client/actions and run them without any building:
 
 ```bash
 chmod +x <example>
