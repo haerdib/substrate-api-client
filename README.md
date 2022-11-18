@@ -22,9 +22,7 @@ or download the already built binaries from Github Actions: https://github.com/s
 chmod +x <example>
 ./<example>
 ```
-
-
-Set the output verbosity by prepending `RUST_LOG=info` or `RUST_LOG=debug`.
+ by prepending `RUST_LOG=info` or `RUST_LOG=debug`.
 
 The following examples can be found in the [examples](/examples) folder:
 
