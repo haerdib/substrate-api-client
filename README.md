@@ -8,7 +8,6 @@ substrate-api-client a library written in Rust for connecting to the substrate's
 
 * Compose extrinsics, send them and subscribe to updates (synchronously).
 * supports composing extrinsics for `no_std` builds
-* Watch events and execute code upon events.
 
 
 To execute the examples, a running substrate node is needed. You can download a node artifact from substrate directly: https://github.com/paritytech
