@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "ac-node-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ac-primitives",
  "bitvec",
@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "ac-primitives"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hex",
  "parity-scale-codec",
@@ -4487,7 +4487,7 @@ dependencies = [
 
 [[package]]
 name = "substrate-api-client"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "ac-compose-macros",
  "ac-node-api",
